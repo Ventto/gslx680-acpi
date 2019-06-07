@@ -259,9 +259,33 @@ static int gsl_ts_reset_chip(struct i2c_client *client)
 
 	arg[0] = 0x88;
 	rc = gsl_ts_write(client, 0xe0, arg, 1);
+
+	/**
+	 * Each time, we set (or write on) the GSL1680 Silead's status
+	 * register 0xE0 with the specific value 0x88 (meaning resetting
+	 * the device), we get a NAK or missing ACK on the bus which seems
+	 * to make the I2C transfer abort in the eyes of the I2C controller.
+	 * From the kernel logs, we can notice "arbitration lost" error messages.
+	 * Theses errors are propagated by the Synopsys DesignWare I2C controller.
+	 *
+	 * Nevertheless, the result from a logic analyzer has shown that the
+	 * aborted transfer is physically sent on the bus in anyway.
+	 *
+	 * The error source is raised by the the DesignWare I2C
+	 * controller's status register. It seems that the controller considers
+	 * NAK or missing ACK as an arbitration lost.
+	 *
+	 * In order to prevent that error blocking the rest of the resetting
+	 * sequence, we need to skip the error raised after setting the Silaed's
+	 * status register with 0x88.
+	 */
 	if (rc < 0) {
-		dev_err(&client->dev, "%s: gsl_ts_write 1 fail!\n", __func__);
-		return rc;
+		if (rc == -EAGAIN) {
+			dev_warn(&client->dev, "%s: gsl_ts_write 1 fail!\n", __func__);
+		} else {
+			dev_err(&client->dev, "%s: gsl_ts_write 1 fail!\n", __func__);
+			return rc;
+		}
 	}
 	usleep_range(10000, 20000);
 
